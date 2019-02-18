@@ -1,0 +1,14 @@
+## site.yml
+---
+- name: Setup EC2
+  hosts: tower-via-local
+  gather_facts: no
+  roles:
+    - infrastructure
+- name: install tomcat
+  remote_user: ec2-user
+  sudo: yes
+  hosts: launched_servers
+  roles:
+    - tomcat
+ 

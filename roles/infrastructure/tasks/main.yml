@@ -1,0 +1,78 @@
+# roles/infrastructure/tasks/main.yml
+---
+- name: Create the tomcat security group
+  ec2_group:
+    description: "Open ssh and tomcat ports"
+    name: "tomcat-sg"
+    region: "{{ region }}"
+    rules:
+      # only allow ssh access from the nat instance
+      - proto: tcp
+        from_port: 22
+        to_port: 22
+        cidr_ip: "{{ nat_ip }}/32"
+      # open tomcat to the world
+      - proto: tcp
+        from_port: 8080
+        to_port: 8080
+        cidr_ip: 0.0.0.0/0
+    purge_rules: yes
+    state: present
+    vpc_id: "{{ vpc_id }}"
+  register: tomcat_sg 
+ 
+# NOTE: only from ansible &gt; 2.0
+# ansible can't create a role from an existing policy, so we're obligated to upload a new one (stored in roles/infrastructure/files)
+#- name: Create S3 read-only access
+#  iam_policy:
+#    iam_name: s3-tomcat
+#    iam_type: role
+#    policy_document: s3-ro.json
+#    policy_name: s3-ro
+#    state: present
+ 
+- name: Launch base server
+  ec2:
+    assign_public_ip: yes
+    group_id: "{{ tomcat_sg.group_id }}"
+    image: "{{ tomcat_ami }}"
+    instance_type: "{{ tomcat_instance_type }}"
+    instance_profile_name: s3-tomcat
+    exact_count: "{{ tomcat_instance_count }}"
+    count_tag: { "Name": "tomcat" }
+    key_name: "{{ tomcat_kp }}"
+    region: "{{ region }}"
+    vpc_subnet_id: "{{ poc_subnet }}"
+    wait: no
+    assign_public_ip: yes
+    instance_tags: {
+      "Name": "tomcat",
+    }
+  register: base_server 
+ 
+# because wait_for doesn't use the ssh config we have to delegate this taks to the nat host. Otherwise tower wil try to connect to port 22 directly
+- name: Check if we can ssh to the instance
+  wait_for:
+    host: "{{ item.private_ip }}"
+    port: 22
+    state: started
+  with_items: base_server.instances
+  when: item.state != "terminated"
+  delegate_to: "{{ nat_ip }}"
+ 
+# add all servers to a temporary group we can use to install tomcat. We need this group as in the current playbook we have 'tower-via-local' as inventory
+- name: Add servers to temporary group
+  add_host:
+    hostname: "{{ item.private_ip }}"
+    groupname: launched_servers
+  with_items: base_server.instances
+  when: item.state != "terminated"
+
+---
+- name: Install basic software
+  yum:
+    name: "{{ item }}"
+    state: present
+  with_items:
+    - java-1.8.0-openjdk
+    - tomcat8

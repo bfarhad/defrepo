@@ -1,0 +1,9 @@
+### deploy.yml
+---
+- name: deploy app
+  remote_user: ec2-user
+  sudo: yes
+  hosts: tag_Name_tomcat
+  roles:
+    - deploy_app
+ 
